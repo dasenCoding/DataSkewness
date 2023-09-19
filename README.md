@@ -276,3 +276,174 @@ LOAD DATA INPATH '/origin_data/idc' OVERWRITE INTO TABLE idc_warring.ods_idc_war
 ## 4 数据倾斜模拟
 
 ### 如何判断出现数据倾斜
+
+通过观察 Spark 任务执行的 WEB UI 界面。
+
+主要查看以下指标：
+
+1. **Scheduler Delay**（调度延迟）：
+   - Scheduler Delay 表示作业提交后到任务实际开始执行之间的时间延迟。这个延迟通常是由于集群资源调度、任务调度和任务分配等因素引起的。较长的 Scheduler Delay 可能会导致作业启动延迟。
+
+2. **Task Deserialization Time**（任务反序列化时间）：
+   - Task Deserialization Time 表示将任务从序列化状态还原为可执行状态所花费的时间。这个时间包括了从网络传输中接收任务并进行解析的过程。较长的任务反序列化时间可能会导致任务启动延迟。
+
+3. **Shuffle Read Time**（Shuffle 读取时间）：
+   - Shuffle Read Time 表示任务在执行过程中从其他任务获取数据所花费的时间。这通常发生在Shuffle阶段，当任务需要从不同分区的节点上获取数据以进行处理时。较长的 Shuffle Read Time 可能表明数据倾斜或网络延迟问题。
+
+4. **Executor Computing Time**（执行器计算时间）：
+   - Executor Computing Time 表示任务在执行器上实际执行计算任务的时间。这包括了数据处理、计算、聚合等操作所花费的时间。较长的 Executor Computing Time 可能表明任务的计算密集型工作量较大。
+
+5. **Shuffle Write Time**（Shuffle 写入时间）：
+   - Shuffle Write Time 表示任务在将数据写入Shuffle输出（通常是磁盘）时所花费的时间。这通常发生在Shuffle阶段，当任务需要将输出数据进行分区并写入磁盘以供其他任务使用。较长的 Shuffle Write Time 可能表明数据分区不均匀或磁盘IO瓶颈。
+
+6. **Result Serialization Time**（结果序列化时间）：
+   - Result Serialization Time 表示任务将计算结果序列化为字节流的时间，以便将结果发送给其他任务或驱动程序。这通常发生在Shuffle阶段或结果返回阶段。较长的 Result Serialization Time 可能表明结果数据较大或序列化开销较高。
+
+
+
+其中 Shuffle Read Time 和 Shuffle Write Time 可以直观地观察是否发生了数据倾斜问题：
+
+1. **Shuffle Read Time**（Shuffle 读取时间）：
+   - Shuffle Read Time 可以反映任务在执行期间从其他任务获取数据所花费的时间。如果在作业执行期间发生了数据倾斜，通常会导致某些任务需要从其他任务获取大量的数据，从而增加了 Shuffle Read Time。如果某些任务的 Shuffle Read Time 明显高于其他任务，这可能表明数据倾斜问题。
+
+2. **Shuffle Write Time**（Shuffle 写入时间）：
+   - Shuffle Write Time 反映了任务将数据写入Shuffle输出所花费的时间。如果作业中存在数据倾斜问题，可能会导致某些任务在Shuffle阶段产生大量的输出数据，从而增加了 Shuffle Write Time。高于平均值的 Shuffle Write Time 可能是数据倾斜的指示。
+
+虽然这些指标可以用于初步检测数据倾斜问题，但要更精确地识别数据倾斜，通常需要进一步的分析和监控。
+
+除了上述指标，还可以通过查看任务的输入数据大小和输出数据大小来检测数据倾斜。如果某个任务的输入数据远远大于其他任务，或者输出数据特别大，这也可能是数据倾斜的迹象。
+
+### 模拟数据倾斜数据准备
+
+使用了两张Hive表:
+
+ods_idc_warrings
+
+ods_idc_warrings_szth_qx
+
+其中 ods_idc_warrings 数据量仅 1000条，而 ods_idc_warrings_szth_qx 数据量近 2,000,000 条。
+
+### 模拟数据倾斜
+
+首先是基本情况，直接用大表左连接小表，观察 Spark WEB UI 中的执行情况，执行如下：
+
+![image-20230919185452715](D:\Typora_保存图片\image-20230919185452715.png)
+
+可以看到在这个 stage 中 第 6 个 task 的执行过程中， Shuffle Read Time 的时间有 0.8s，远高于计算时间和其他时间。
+
+![image-20230919190103073](D:\Typora_保存图片\image-20230919190103073.png)
+
+上面是所有执行的 stage ，其中有 1.2m 的 stage，观察后发现这个 stage 中的所有任务的计算时间都远高于其他，主要愿意如下：
+
+如果任务（Task）的执行时间中，Executor 的计算时间远高于其他时间，通常表示计算密集型的任务。这意味着任务本身涉及大量的计算操作，例如复杂的计算、数据转换或计算密集型算法的执行。以下是一些导致 Executor 计算时间较高的常见情况：
+
+1. **复杂的数据处理或转换**：如果任务涉及对大量数据进行复杂的处理、转换或计算，可能需要大量的计算时间。这可能包括数据清洗、过滤、聚合等操作。
+
+2. **复杂的计算逻辑**：某些任务可能需要执行复杂的数学计算、模型训练、机器学习算法等。这些计算通常需要更多的计算资源和时间。
+
+3. **资源限制**：如果 Executor 的资源（例如CPU和内存）受到限制，可能导致计算时间增加。在这种情况下，任务可能需要等待其他任务释放资源，以便完成计算。
+
+4. **数据倾斜**：如果任务中存在数据倾斜，即某些数据分区的处理比其他分区更耗时，这可能导致 Executor 计算时间不均匀。数据倾斜问题可能需要通过优化数据分区或使用广播变量等技术来解决。
+
+5. **未优化的算法**：有时任务可能使用未经优化的算法或操作，导致计算时间增加。在这种情况下，需要重新审查和优化任务的代码。
+
+解决办法：
+
+- 分析任务的计算逻辑，查找可能的性能瓶颈。
+- 使用 Spark 监控和日志来了解任务执行的详细信息，包括计算时间、数据倾斜情况等。
+- 根据分析结果采取优化措施，例如使用广播变量、数据分区调整、缓存等来改进性能。
+- 如果任务需要更多的计算资源，请考虑调整集群资源配置。
+
+通过识别和解决 Executor 计算时间高的问题，可以提高 Spark 作业的性能和效率。
+
+
+
+另外，有一些 stage 没有执行而是选择跳过 skipped，原因是可能是它们的结果已经被缓存不需要重新进行计算。解决办法是，使用命令清楚这些表的缓存：
+
+```sql
+spark.sql("uncache table idc_warring.ods_idc_warrings_szth_qx")
+spark.sql("uncache table idc_warring.ods_idc_warrings")
+```
+
+### 解决数据倾斜
+
+解决办法：将 ods_idc_warrings 进行广播，放在各个分区中以便于大表可以在本地进行表的连接操作。
+
+具体步骤如下：
+
+首先需要从 hive 中获取表，启动支持 hive的配置：
+
+```scala
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.functions.broadcast
+
+val spark = SparkSession.builder()
+  .appName("AppName")
+  .enableHiveSupport() // 启用 Hive 支持
+  .getOrCreate()
+
+// 获取小表
+val smallTable = spark.sql("SELECT * FROM idc_warrings.ods_idc_warrings")
+// 获取大表
+val lagerTable = spark.sql("SELECT * FROM idc_warrings.ods_idc_warrings_szth_qx")
+```
+
+从hive中获取大小表之后，使用广播变量进行广播：
+
+```scala
+val broadcastSmallTable = spark.sparkContext.broadcast(smallTable)
+
+val broadSmallTable = broadcast(broadcastSmallTable.value)
+
+// 注册广播变量为一个临时表，并注册 lagerTable 也为一个临时表
+broadSmallTable.createOrReplaceTempView("broadcasted_small_table")
+lagerTable.createOrReplaceTempView("lagerTable")
+```
+
+使用两个注册后的表进行连接操作：
+
+```scala
+val result = spark.sql(
+  """
+  SELECT
+    message_source,
+    COUNT(1) as total_warring
+  FROM (
+    SELECT
+      o1.message_source,
+      o1.message_delay_time,
+      o1.message_level,
+      o1.message_delay_time,
+      o2.message_source as o2_message_source,
+      o2.message_delay_time as o2_message_delay_time,
+      o2.message_level as o2_message_level
+    FROM
+      broadcasted_small_table o1
+    LEFT JOIN
+      lagerTable o2
+    ON
+      o1.message_source = o2.message_source
+  ) t
+  GROUP BY
+    message_source
+  """.stripMargin)
+
+// 展示结果：
+result.show()
+```
+
+最终，使用广播变量优化后的执行效果如：
+
+![image-20230919201227223](D:\Typora_保存图片\image-20230919201227223.png)
+
+
+
+![image-20230919201233599](D:\Typora_保存图片\image-20230919201233599.png)
+
+
+
+![image-20230919201239508](D:\Typora_保存图片\image-20230919201239508.png)
+
+
+
+各个 stage 中的 task 的 shuffle read time / shuffle write time  均保持在毫秒内。
