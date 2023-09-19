@@ -168,7 +168,8 @@ export HADOOP_CONF_DIR=/opt/moudle/hadoop/etc/hadoop
 
    最后出现结果：
 
-   ![image-20230916223838486](D:\Typora_保存图片\image-20230916223838486.png)
+   
+  ![图1](https://github.com/dasenCoding/DataSkewness/blob/main/image-20230916223838486.png)
 
 表明已经将 Spark SQL和 Hive 整合成功。
 
@@ -184,7 +185,8 @@ export HADOOP_CONF_DIR=/opt/moudle/hadoop/etc/hadoop
 
 此处有一个问题，就是即便我使用了 `--master yarn`与`--deploy-mode cluster`两个参数，但是在Spark Job WEB UI界面依旧看不到 Spark 执行整个任务的流程。后面我使用 `spark-sql`却可以看到整个 job 的执行情况。如下图：
 
-![image-20230917212651974](D:\Typora_保存图片\image-20230917212651974.png)
+![图2](https://github.com/dasenCoding/DataSkewness/blob/main/image-20230917212651974.png)
+
 
 <font color='green'>也就是我无法在本地 idea 中编写程序，然后远程提交到 spark 集群进行任务运行。时间比较紧先mark一下，目前先使用 spark-sql 客户端来进行数据分析计算以及数据倾斜模拟与解决。</font>
 
@@ -327,11 +329,11 @@ ods_idc_warrings_szth_qx
 
 首先是基本情况，直接用大表左连接小表，观察 Spark WEB UI 中的执行情况，执行如下：
 
-![image-20230919185452715](D:\Typora_保存图片\image-20230919185452715.png)
+![图3](https://github.com/dasenCoding/DataSkewness/blob/main/image-20230919185452715.png)
 
 可以看到在这个 stage 中 第 6 个 task 的执行过程中， Shuffle Read Time 的时间有 0.8s，远高于计算时间和其他时间。
 
-![image-20230919190103073](D:\Typora_保存图片\image-20230919190103073.png)
+![图4](https://github.com/dasenCoding/DataSkewness/blob/main/image-20230919190103073.png)
 
 上面是所有执行的 stage ，其中有 1.2m 的 stage，观察后发现这个 stage 中的所有任务的计算时间都远高于其他，主要愿意如下：
 
@@ -434,15 +436,15 @@ result.show()
 
 最终，使用广播变量优化后的执行效果如：
 
-![image-20230919201227223](D:\Typora_保存图片\image-20230919201227223.png)
+![图5](https://github.com/dasenCoding/DataSkewness/blob/main/image-20230919201227223.png)
 
 
 
-![image-20230919201233599](D:\Typora_保存图片\image-20230919201233599.png)
+![图6](https://github.com/dasenCoding/DataSkewness/blob/main/image-20230919201233599.png)
 
 
 
-![image-20230919201239508](D:\Typora_保存图片\image-20230919201239508.png)
+![图7](https://github.com/dasenCoding/DataSkewness/blob/main/image-20230919201239508.png)
 
 
 
